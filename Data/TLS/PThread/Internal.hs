@@ -6,12 +6,14 @@
 -- Export EVERYTHING from this internal module.
 module Data.TLS.PThread.Internal where
 
+import Control.Concurrent (isCurrentThreadBound, rtsSupportsBoundThreads)
 import Control.Monad
 import Control.Exception
 import Data.IORef
 import Foreign.Ptr
 import Foreign.StablePtr
 import Foreign.Storable(Storable(sizeOf))
+import System.IO (hPutStrLn, stderr)
     
 #include "../TLS_Sig.hs"
 --------------------------------------------------------------------------------
@@ -74,8 +76,14 @@ mkTLS new = do
   allC <- newIORef []
   return $! TLS key new allC
 
+-- | Fetches the copy of the TLS variable of the running OS thread.
+--
+-- The returned value is reliable only if the current thread is bound.
+-- For this reason, this function calls 'error' if the current thread is
+-- unbound.
 getTLS TLS{key,mknew,allCopies} = do
   p <- pthread_getspecific key
+  checkBoundness
   if castStablePtrToPtr p == nullPtr then do
     a <- mknew
     sp <- newStablePtr a
@@ -84,6 +92,13 @@ getTLS TLS{key,mknew,allCopies} = do
     return a
    else
     deRefStablePtr p
+ where
+  checkBoundness = when rtsSupportsBoundThreads $ do
+    b <- isCurrentThreadBound
+    when (not b) $ do
+      let msg = "thread-local-storage: PThread.getTLS used from an unbound thread."
+      hPutStrLn stderr msg
+      error msg
 
 allTLS TLS{allCopies} = do 
     ls <- readIORef allCopies
